@@ -10,6 +10,7 @@ import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { useColorScheme } from '@/hooks/useTheme';
 import Colors from '@/constants/Colors';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
+import { ScanProvider } from '@/contexts/ScanContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -69,7 +70,9 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <RootLayoutNav />
+      <ScanProvider>
+        <RootLayoutNav />
+      </ScanProvider>
     </AuthProvider>
   );
 }
