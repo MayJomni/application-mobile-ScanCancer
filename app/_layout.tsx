@@ -11,6 +11,7 @@ import { useColorScheme } from '@/hooks/useTheme';
 import Colors from '@/constants/Colors';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { ScanProvider } from '@/contexts/ScanContext';
+import { ArticlesProvider } from '@/contexts/ArticlesContext';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -71,7 +72,9 @@ export default function RootLayout() {
   return (
     <AuthProvider>
       <ScanProvider>
-        <RootLayoutNav />
+        <ArticlesProvider>
+          <RootLayoutNav />
+        </ArticlesProvider>
       </ScanProvider>
     </AuthProvider>
   );
@@ -84,18 +87,20 @@ function RootLayoutNav() {
   const router = useRouter();
 
   useEffect(() => {
+    // Don't redirect while still checking initial auth state
     if (isLoading) return;
 
-    const inAuthGroup = segments[0] === '(tabs)';
+    const firstSegment = segments[0];
+    const inProtectedGroup = firstSegment === '(tabs)';
 
-    if (isAuthenticated && !inAuthGroup) {
-      // User is logged in but on login/register — redirect to tabs
+    if (isAuthenticated && !inProtectedGroup) {
+      // User is authenticated but not on tabs — redirect to main app
       router.replace('/(tabs)');
-    } else if (!isAuthenticated && inAuthGroup) {
-      // User is not logged in but trying to access tabs — redirect to login
+    } else if (!isAuthenticated && inProtectedGroup) {
+      // User is not authenticated but on tabs — redirect to login
       router.replace('/login');
     }
-  }, [isAuthenticated, isLoading, segments]);
+  }, [isAuthenticated, isLoading]);
 
   if (isLoading) {
     return (

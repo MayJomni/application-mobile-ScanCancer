@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ScrollView, Animated, Alert, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ScrollView, Animated, ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,7 +16,7 @@ export default function RegisterScreen() {
   const colors = useThemeColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { register, isLoading } = useAuth();
+  const { register } = useAuth();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -29,6 +29,8 @@ export default function RegisterScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [errors, setErrors] = useState<any>({});
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -55,17 +57,28 @@ export default function RegisterScreen() {
   };
 
   const handleRegister = async () => {
+    setRegisterError(null);
     if (!validate()) return;
-    const result = await register({
-      name,
-      email,
-      password,
-      role,
-      specialty,
-      licenseNumber,
-      hospital,
-    });
-    if (!result.success) Alert.alert('Erreur', result.error || 'L\'inscription a échoué. Veuillez réessayer.');
+    setBusy(true);
+    try {
+      const result = await register({
+        name,
+        email,
+        password,
+        role,
+        specialty,
+        licenseNumber,
+        hospital,
+      });
+      if (!result.success) {
+        setRegisterError(result.error || 'L\'inscription a échoué. Veuillez réessayer.');
+      }
+      // If success, navigation is handled by _layout.tsx automatically
+    } catch (e) {
+      setRegisterError('Une erreur est survenue. Réessayez.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const InputField = ({ icon, label, value, onChangeText, error, placeholder, secure, keyboardType, autoCapitalize }: any) => (
@@ -116,6 +129,14 @@ export default function RegisterScreen() {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.formScroll}>
           <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
 
+            {/* Register Error Banner */}
+            {registerError && (
+              <View style={styles.errorBanner}>
+                <Ionicons name="alert-circle" size={20} color="#FFF" />
+                <Text style={styles.errorBannerText}>{registerError}</Text>
+              </View>
+            )}
+
             {/* Role Selection */}
             <Text style={[styles.label, { color: colors.text, marginBottom: Spacing.sm }]}>Mon rôle</Text>
             <View style={styles.roleRow}>
@@ -161,9 +182,9 @@ export default function RegisterScreen() {
             {errors.terms && <Text style={[styles.errorText, { marginLeft: 28 }]}>{errors.terms}</Text>}
 
             {/* Register Button */}
-            <TouchableOpacity onPress={handleRegister} disabled={isLoading} activeOpacity={0.8} style={{ marginTop: Spacing.lg }}>
-              <LinearGradient colors={[Colors.secondary, Colors.secondaryDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.registerBtn}>
-                {isLoading ? <ActivityIndicator color="#FFF" /> : (
+            <TouchableOpacity onPress={handleRegister} disabled={busy} activeOpacity={0.8} style={{ marginTop: Spacing.lg }}>
+              <LinearGradient colors={[Colors.secondary, Colors.secondaryDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.registerBtn, busy && { opacity: 0.7 }]}>
+                {busy ? <ActivityIndicator color="#FFF" /> : (
                   <>
                     <Ionicons name="shield-checkmark" size={20} color="#FFF" />
                     <Text style={styles.registerBtnText}>Créer mon compte sécurisé</Text>
@@ -195,6 +216,8 @@ const styles = StyleSheet.create({
   headerSubtitle: { fontSize: FontSize.sm, color: 'rgba(255,255,255,0.8)', marginTop: 4 },
   formContainer: { flex: 1, marginTop: -15, borderTopLeftRadius: BorderRadius.xl, borderTopRightRadius: BorderRadius.xl, overflow: 'hidden' },
   formScroll: { padding: Spacing.lg, paddingTop: Spacing.xl },
+  errorBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#DC2626', padding: Spacing.md, borderRadius: BorderRadius.md, marginBottom: Spacing.lg, gap: Spacing.sm },
+  errorBannerText: { color: '#FFF', fontSize: FontSize.sm, fontWeight: FontWeight.medium, flex: 1 },
   roleRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
   roleCard: { flex: 1, flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, gap: Spacing.sm },
   roleIcon: { width: 40, height: 40, borderRadius: BorderRadius.sm, alignItems: 'center', justifyContent: 'center' },

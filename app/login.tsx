@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, ScrollView, Animated, Alert, ActivityIndicator,
+  KeyboardAvoidingView, Platform, ScrollView, Animated, ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -17,12 +17,14 @@ export default function LoginScreen() {
   const colorScheme = useColorScheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { login, isLoading } = useAuth();
+  const { login } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -47,14 +49,25 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    setLoginError(null);
     if (!validate()) return;
-    const result = await login(email, password);
-    if (!result.success) {
-      Alert.alert('Erreur', result.error || 'Email ou mot de passe incorrect.\n\nCompte démo :\n• dr.amira@dermascan.com / doctor123');
+    setBusy(true);
+    try {
+      const result = await login(email.trim(), password);
+      if (result.success) {
+        // Navigation handled by _layout.tsx automatically
+      } else {
+        setLoginError(result.error || 'Email ou mot de passe incorrect.');
+      }
+    } catch (e) {
+      setLoginError('Une erreur est survenue. Réessayez.');
+    } finally {
+      setBusy(false);
     }
   };
 
   const fillDemo = (type: 'specialist' | 'doctor') => {
+    setLoginError(null);
     if (type === 'specialist') {
       setEmail('dr.amira@dermascan.com');
       setPassword('doctor123');
@@ -92,6 +105,14 @@ export default function LoginScreen() {
               Accédez à votre espace de diagnostic sécurisé
             </Text>
 
+            {/* Login Error Banner */}
+            {loginError && (
+              <View style={styles.errorBanner}>
+                <Ionicons name="alert-circle" size={20} color="#FFF" />
+                <Text style={styles.errorBannerText}>{loginError}</Text>
+              </View>
+            )}
+
             {/* Email */}
             <View style={styles.inputGroup}>
               <Text style={[styles.label, { color: colors.text }]}>Email</Text>
@@ -102,7 +123,7 @@ export default function LoginScreen() {
                   placeholder="votre@email.com"
                   placeholderTextColor={colors.textTertiary}
                   value={email}
-                  onChangeText={(t) => { setEmail(t); setErrors(e => ({ ...e, email: undefined })); }}
+                  onChangeText={(t) => { setEmail(t); setErrors(e => ({ ...e, email: undefined })); setLoginError(null); }}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoComplete="email"
@@ -121,7 +142,7 @@ export default function LoginScreen() {
                   placeholder="••••••••"
                   placeholderTextColor={colors.textTertiary}
                   value={password}
-                  onChangeText={(t) => { setPassword(t); setErrors(e => ({ ...e, password: undefined })); }}
+                  onChangeText={(t) => { setPassword(t); setErrors(e => ({ ...e, password: undefined })); setLoginError(null); }}
                   secureTextEntry={!showPassword}
                   autoComplete="password"
                 />
@@ -137,9 +158,9 @@ export default function LoginScreen() {
             </TouchableOpacity>
 
             {/* Login Button */}
-            <TouchableOpacity onPress={handleLogin} disabled={isLoading} activeOpacity={0.8}>
-              <LinearGradient colors={[Colors.primary, Colors.primaryDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.loginBtn}>
-                {isLoading ? (
+            <TouchableOpacity onPress={handleLogin} disabled={busy} activeOpacity={0.8}>
+              <LinearGradient colors={[Colors.primary, Colors.primaryDark]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.loginBtn, busy && { opacity: 0.7 }]}>
+                {busy ? (
                   <ActivityIndicator color="#FFF" />
                 ) : (
                   <>
@@ -161,13 +182,14 @@ export default function LoginScreen() {
                 <Ionicons name="person" size={16} color={Colors.secondary} />
                 <Text style={[styles.demoBtnText, { color: Colors.secondary }]}>Médecin — dr.mohamed@dermascan.com</Text>
               </TouchableOpacity>
+              <Text style={[styles.demoHint, { color: colors.textTertiary }]}>Mot de passe : doctor123</Text>
             </View>
 
             {/* Register Link */}
             <View style={styles.registerRow}>
               <Text style={[styles.registerText, { color: colors.textSecondary }]}>Pas encore de compte ?</Text>
               <TouchableOpacity onPress={() => router.push('/register')}>
-                <Text style={[styles.registerLink, { color: Colors.primary }]}> S'inscrire</Text>
+                <Text style={[styles.registerLink, { color: Colors.primary }]}> Créer un compte</Text>
               </TouchableOpacity>
             </View>
 
@@ -198,6 +220,8 @@ const styles = StyleSheet.create({
   formScroll: { padding: Spacing.lg, paddingTop: Spacing.xl },
   formTitle: { fontSize: FontSize.xxl, fontWeight: FontWeight.bold },
   formSubtitle: { fontSize: FontSize.sm, marginTop: 4, marginBottom: Spacing.xl },
+  errorBanner: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#DC2626', padding: Spacing.md, borderRadius: BorderRadius.md, marginBottom: Spacing.lg, gap: Spacing.sm },
+  errorBannerText: { color: '#FFF', fontSize: FontSize.sm, fontWeight: FontWeight.medium, flex: 1 },
   inputGroup: { marginBottom: Spacing.md },
   label: { fontSize: FontSize.sm, fontWeight: FontWeight.semibold, marginBottom: Spacing.xs },
   inputWrapper: { flexDirection: 'row', alignItems: 'center', borderWidth: 1.5, borderRadius: BorderRadius.md, paddingHorizontal: Spacing.md, minHeight: 52, gap: Spacing.sm },
@@ -211,6 +235,7 @@ const styles = StyleSheet.create({
   demoTitle: { fontSize: FontSize.sm, fontWeight: FontWeight.semibold, marginBottom: Spacing.sm },
   demoBtn: { flexDirection: 'row', alignItems: 'center', padding: Spacing.sm, borderRadius: BorderRadius.sm, borderWidth: 1, marginBottom: Spacing.xs, gap: Spacing.sm },
   demoBtnText: { fontSize: FontSize.xs, fontWeight: FontWeight.medium },
+  demoHint: { fontSize: FontSize.xs, marginTop: Spacing.xs, textAlign: 'center' },
   registerRow: { flexDirection: 'row', justifyContent: 'center', marginTop: Spacing.xl },
   registerText: { fontSize: FontSize.md },
   registerLink: { fontSize: FontSize.md, fontWeight: FontWeight.bold },

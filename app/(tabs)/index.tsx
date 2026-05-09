@@ -1,7 +1,7 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Animated, Dimensions, StatusBar,
+  Animated, Dimensions, StatusBar, Image, Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -12,175 +12,246 @@ import { useThemeColors, useColorScheme } from '@/hooks/useTheme';
 import { Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/Theme';
 import Card from '@/components/ui/Card';
 import { useScanContext } from '@/contexts/ScanContext';
+import { useArticlesContext } from '@/contexts/ArticlesContext';
 import { MiniBarChart } from '@/components/ui/Histogram';
 import { getRiskColor } from '@/constants/Lesions';
+import RadarChart from '@/components/ui/RadarChart';
+import { DonutChart, Sparkline, ProgressBar } from '@/components/ui/AdvancedCharts';
+import { generateInsights, getPerformanceMetrics, getAnatomicalDistribution, AIInsight } from '@/services/AIAnalyticsService';
 
 const { width } = Dimensions.get('window');
-
-const TIPS = [
-  { icon: '☀️', title: 'Protection Solaire', desc: 'Appliquez un écran solaire SPF 50+ quotidiennement' },
-  { icon: '🔍', title: 'Auto-examen', desc: 'Examinez votre peau une fois par mois' },
-  { icon: '📏', title: 'Règle ABCDE', desc: 'Asymétrie, Bords, Couleur, Diamètre, Évolution' },
-  { icon: '👨‍⚕️', title: 'Suivi Médical', desc: 'Consultez un dermatologue une fois par an' },
-];
+const PERIODS = ['Semaine', 'Mois', 'Année'] as const;
 
 export default function HomeScreen() {
   const router = useRouter();
   const colors = useThemeColors();
   const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
   const insets = useSafeAreaInsets();
-  const { getStats, scans } = useScanContext();
+  const { getStats, scans, getAverageABCDEscores } = useScanContext();
+  const { dailyTip, articles, toggleSaveArticle } = useArticlesContext();
   const stats = getStats();
+  const avgABCDE = getAverageABCDEscores();
+
+  const [period, setPeriod] = useState<number>(1);
+  const [showArticleModal, setShowArticleModal] = useState(false);
+  const [selectedArticle, setSelectedArticle] = useState<any>(null);
+  const [showInsightsModal, setShowInsightsModal] = useState(false);
+
+  const insights = useMemo(() => generateInsights(scans), [scans]);
+  const metrics = useMemo(() => getPerformanceMetrics(scans), [scans]);
+  const anatomical = useMemo(() => getAnatomicalDistribution(scans), [scans]);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
-  const scaleAnim = useRef(new Animated.Value(0.95)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
       Animated.timing(slideAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
-      Animated.spring(scaleAnim, { toValue: 1, friction: 8, tension: 40, useNativeDriver: true }),
     ]).start();
     const pulse = Animated.loop(Animated.sequence([
-      Animated.timing(pulseAnim, { toValue: 1.05, duration: 1500, useNativeDriver: true }),
-      Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
+      Animated.timing(pulseAnim, { toValue: 1.06, duration: 1800, useNativeDriver: true }),
+      Animated.timing(pulseAnim, { toValue: 1, duration: 1800, useNativeDriver: true }),
     ]));
     pulse.start();
     return () => pulse.stop();
   }, []);
 
+  const criticalInsights = insights.filter(i => i.severity === 'critical');
+  const hasAlerts = criticalInsights.length > 0;
+
+  const getInsightBg = (s: AIInsight['severity']) =>
+    s === 'critical' ? Colors.danger : s === 'warning' ? Colors.warning : Colors.primary;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <StatusBar barStyle={colorScheme === 'dark' ? 'light-content' : 'dark-content'} />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={[styles.scroll, { paddingTop: insets.top }]}>
-        {/* Header */}
+
+        {/* ── Header with Logo ── */}
         <Animated.View style={[styles.header, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-          <View>
-            <Text style={[styles.greeting, { color: colors.textSecondary }]}>Bienvenue sur</Text>
-            <Text style={[styles.appName, { color: colors.text }]}>DermaScan</Text>
+          <View style={styles.headerLeft}>
+            <Image source={require('@/assets/images/logo.png')} style={styles.logo} resizeMode="contain" />
+            <View>
+              <Text style={[styles.greeting, { color: colors.textSecondary }]}>Tableau de bord</Text>
+              <Text style={[styles.appName, { color: colors.text }]}>DermaScan</Text>
+            </View>
           </View>
-          <TouchableOpacity style={[styles.notifBtn, { backgroundColor: colors.card }]}>
+          <TouchableOpacity style={[styles.notifBtn, { backgroundColor: colors.card }]} onPress={() => setShowInsightsModal(true)}>
             <Ionicons name="notifications-outline" size={22} color={colors.text} />
+            {hasAlerts && <View style={styles.notifBadge} />}
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Hero Scan Card */}
-        <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
+        {/* ── Period Filter ── */}
+        <Animated.View style={[styles.periodRow, { opacity: fadeAnim }]}>
+          {PERIODS.map((p, i) => (
+            <TouchableOpacity key={i} onPress={() => setPeriod(i)}
+              style={[styles.periodBtn, period === i && { backgroundColor: Colors.primary }]}>
+              <Text style={[styles.periodText, { color: period === i ? '#FFF' : colors.textSecondary }]}>{p}</Text>
+            </TouchableOpacity>
+          ))}
+        </Animated.View>
+
+        {/* ── Hero Scan CTA ── */}
+        <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: pulseAnim }] }}>
           <TouchableOpacity activeOpacity={0.9} onPress={() => router.push('/(tabs)/scan')}>
             <LinearGradient colors={['#2563EB', '#1D4ED8', '#7C3AED']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.heroCard}>
               <View style={styles.heroContent}>
-                <View style={styles.heroTextSection}>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.heroTitle}>Analyser une lésion</Text>
-                  <Text style={styles.heroSubtitle}>Prenez une photo ou importez une image pour obtenir une analyse IA instantanée</Text>
-                  <View style={styles.heroButton}>
-                    <Ionicons name="camera" size={18} color="#2563EB" />
-                    <Text style={styles.heroButtonText}>Commencer le scan</Text>
-                  </View>
+                  <Text style={styles.heroSub}>Diagnostic IA instantané</Text>
                 </View>
-                <Animated.View style={[styles.heroIconContainer, { transform: [{ scale: pulseAnim }] }]}>
-                  <View style={styles.heroIconCircle}>
-                    <Ionicons name="scan" size={40} color="#FFFFFF" />
-                  </View>
-                </Animated.View>
+                <View style={styles.heroIcon}><Ionicons name="scan" size={32} color="#FFF" /></View>
               </View>
-              <View style={[styles.decorCircle, styles.decorCircle1]} />
-              <View style={[styles.decorCircle, styles.decorCircle2]} />
+              <View style={[styles.decorCircle, { top: -20, right: -20, width: 100, height: 100 }]} />
             </LinearGradient>
           </TouchableOpacity>
         </Animated.View>
 
-        {/* Quick Stats - Dynamic */}
-        <Animated.View style={[styles.statsRow, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-          <Card variant="elevated" style={styles.statCard}>
-            <View style={[styles.statIcon, { backgroundColor: Colors.primaryLight + '15' }]}>
-              <Ionicons name="analytics" size={22} color={Colors.primary} />
-            </View>
-            <Text style={[styles.statNumber, { color: colors.text }]}>{stats.totalScans}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Analyses</Text>
-          </Card>
-          <Card variant="elevated" style={styles.statCard}>
-            <View style={[styles.statIcon, { backgroundColor: Colors.success + '15' }]}>
-              <Ionicons name="checkmark-circle" size={22} color={Colors.success} />
-            </View>
-            <Text style={[styles.statNumber, { color: colors.text }]}>{stats.benignCount}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Bénignes</Text>
-          </Card>
-          <Card variant="elevated" style={styles.statCard}>
-            <View style={[styles.statIcon, { backgroundColor: Colors.danger + '15' }]}>
-              <Ionicons name="warning" size={22} color={Colors.danger} />
-            </View>
-            <Text style={[styles.statNumber, { color: colors.text }]}>{stats.preMalignantCount + stats.malignantCount}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>À surveiller</Text>
+        {/* ── Daily Tip ── */}
+        {dailyTip && (
+          <Animated.View style={{ opacity: fadeAnim }}>
+            <LinearGradient colors={isDark ? ['#1E293B', '#1a2540'] : ['#EFF6FF', '#F0FDFA']} style={styles.tipGradient}>
+              <Text style={{ fontSize: 22 }}>{dailyTip.icon}</Text>
+              <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+                <Text style={[styles.tipTitle, { color: Colors.primary }]}>💡 {dailyTip.title}</Text>
+                <Text style={[styles.tipDesc, { color: colors.textSecondary }]}>{dailyTip.content}</Text>
+              </View>
+            </LinearGradient>
+          </Animated.View>
+        )}
+
+        {/* ── Quick Stats Row ── */}
+        <Animated.View style={[styles.statsRow, { opacity: fadeAnim }]}>
+          {[
+            { label: 'Total', value: stats.totalScans, icon: 'analytics', color: Colors.primary, bg: Colors.primaryLight },
+            { label: 'Bénignes', value: stats.benignCount, icon: 'shield-checkmark', color: Colors.success, bg: Colors.success },
+            { label: 'Alertes', value: stats.preMalignantCount + stats.malignantCount, icon: 'warning', color: Colors.danger, bg: Colors.danger },
+          ].map((s, i) => (
+            <Card key={i} variant="elevated" style={styles.statCard}>
+              <View style={[styles.statIcon, { backgroundColor: s.bg + '15' }]}>
+                <Ionicons name={s.icon as any} size={20} color={s.color} />
+              </View>
+              <Text style={[styles.statNum, { color: colors.text }]}>{s.value}</Text>
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{s.label}</Text>
+            </Card>
+          ))}
+        </Animated.View>
+
+        {/* ── AI Insights Agent ── */}
+        <Animated.View style={{ opacity: fadeAnim }}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>🤖 Agent IA Prédictif</Text>
+            <TouchableOpacity onPress={() => setShowInsightsModal(true)}>
+              <Text style={{ color: Colors.primary, fontSize: FontSize.sm }}>Voir tout</Text>
+            </TouchableOpacity>
+          </View>
+          <Card variant="elevated" style={{ padding: 0, marginBottom: Spacing.lg }}>
+            {insights.slice(0, 3).map((ins, i) => (
+              <View key={ins.id} style={[styles.insightRow, i > 0 && { borderTopWidth: 1, borderTopColor: colors.separator }]}>
+                <View style={[styles.insightDot, { backgroundColor: getInsightBg(ins.severity) + '20' }]}>
+                  <Text style={{ fontSize: 16 }}>{ins.icon}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.insightTitle, { color: colors.text }]}>{ins.title}</Text>
+                  <Text style={[styles.insightMsg, { color: colors.textSecondary }]} numberOfLines={2}>{ins.message}</Text>
+                </View>
+                <View style={[styles.severityBadge, { backgroundColor: getInsightBg(ins.severity) + '15' }]}>
+                  <View style={[styles.severityDotInner, { backgroundColor: getInsightBg(ins.severity) }]} />
+                </View>
+              </View>
+            ))}
           </Card>
         </Animated.View>
 
-        {/* Risk Distribution Chart - only if scans exist */}
+        {/* ── Charts Section ── */}
         {stats.totalScans > 0 && (
-          <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>📊 Répartition des risques</Text>
-            <Card variant="elevated" style={{ marginBottom: Spacing.lg, padding: Spacing.lg }}>
-              {/* Risk bar */}
-              <View style={{ flexDirection: 'row', height: 24, borderRadius: 12, overflow: 'hidden', marginBottom: Spacing.md }}>
-                {stats.riskDistribution.filter(r => r.value > 0).map((r, i) => (
-                  <View key={i} style={{ flex: r.value, backgroundColor: r.color, alignItems: 'center', justifyContent: 'center' }}>
-                    <Text style={{ color: '#FFF', fontSize: 10, fontWeight: '700' }}>{r.value}</Text>
-                  </View>
-                ))}
-                {stats.totalScans === 0 && <View style={{ flex: 1, backgroundColor: colors.separator }} />}
-              </View>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
-                {stats.riskDistribution.map((r, i) => (
-                  <View key={i} style={{ alignItems: 'center' }}>
-                    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: r.color, marginBottom: 4 }} />
-                    <Text style={{ fontSize: 10, color: colors.textSecondary }}>{r.label}</Text>
-                    <Text style={{ fontSize: FontSize.md, fontWeight: '700', color: r.color }}>{r.value}</Text>
-                  </View>
-                ))}
-              </View>
+          <Animated.View style={{ opacity: fadeAnim }}>
+
+            {/* Donut + Confidence */}
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>📊 Répartition & Confiance</Text>
+            <View style={{ flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg }}>
+              <Card variant="elevated" style={{ flex: 1, alignItems: 'center', paddingVertical: Spacing.md }}>
+                <DonutChart
+                  data={stats.riskDistribution.map(r => ({ label: r.label, value: r.value, color: r.color }))}
+                  size={130}
+                  strokeWidth={16}
+                  textColor={colors.text}
+                  centerValue={String(stats.totalScans)}
+                  centerLabel="scans"
+                />
+                <View style={{ flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.sm }}>
+                  {stats.riskDistribution.map((r, i) => (
+                    <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: r.color }} />
+                      <Text style={{ fontSize: 9, color: colors.textSecondary }}>{r.value}</Text>
+                    </View>
+                  ))}
+                </View>
+              </Card>
+              <Card variant="elevated" style={{ flex: 1, justifyContent: 'center', paddingHorizontal: Spacing.md }}>
+                <Text style={{ fontSize: FontSize.xs, color: colors.textSecondary, marginBottom: 4 }}>Confiance IA</Text>
+                <Text style={{ fontSize: FontSize.xxl, fontWeight: '800', color: Colors.primary }}>{(stats.avgConfidence * 100).toFixed(1)}%</Text>
+                <Sparkline data={stats.weeklyScans} width={width / 2 - 60} height={50} color={Colors.primary} />
+                <View style={{ marginTop: Spacing.sm }}>
+                  <ProgressBar value={metrics.qualityScore} color={Colors.secondary} label="Qualité img." textColor={colors.textSecondary} />
+                  <ProgressBar value={metrics.highRiskRate * 100} color={Colors.danger} label="Taux risque" textColor={colors.textSecondary} />
+                </View>
+              </Card>
+            </View>
+
+            {/* Radar ABCDE */}
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>🕸️ Critères ABCDE Moyens</Text>
+            <Card variant="elevated" style={{ marginBottom: Spacing.lg, paddingVertical: Spacing.md }}>
+              <RadarChart data={avgABCDE} size={240} color={Colors.accent} textColor={colors.textSecondary} />
+              <Text style={{ textAlign: 'center', fontSize: FontSize.xs, color: colors.textSecondary, marginTop: 4 }}>
+                Score total moyen : {avgABCDE.total.toFixed(2)} / 10
+              </Text>
             </Card>
 
-            {/* Lesion types */}
+            {/* Lesion Types */}
             {stats.lesionTypeDistribution.length > 0 && (
               <>
-                <Text style={[styles.sectionTitle, { color: colors.text }]}>🔬 Types de lésions détectées</Text>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>🔬 Types de lésions</Text>
                 <Card variant="elevated" style={{ marginBottom: Spacing.lg, padding: Spacing.lg }}>
                   <MiniBarChart data={stats.lesionTypeDistribution.map(d => ({ label: d.name, value: d.count, color: d.color }))} textColor={colors.textSecondary} barBgColor={colors.separator} />
                 </Card>
               </>
             )}
 
-            {/* Confidence */}
-            <Card variant="elevated" style={{ marginBottom: Spacing.lg, padding: Spacing.lg }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View>
-                  <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary }}>Confiance moyenne</Text>
-                  <Text style={{ fontSize: FontSize.xxl, fontWeight: '800', color: Colors.primary }}>{(stats.avgConfidence * 100).toFixed(1)}%</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary }}>Total analyses</Text>
-                  <Text style={{ fontSize: FontSize.xxl, fontWeight: '800', color: colors.text }}>{stats.totalScans}</Text>
-                </View>
-              </View>
-            </Card>
+            {/* Anatomical Distribution */}
+            {anatomical.some(a => a.count > 0) && (
+              <>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>🦴 Localisation Anatomique</Text>
+                <Card variant="elevated" style={{ marginBottom: Spacing.lg, padding: Spacing.lg }}>
+                  <MiniBarChart data={anatomical.filter(a => a.count > 0).map(a => ({ label: a.siteFr, value: a.count, color: a.color }))} textColor={colors.textSecondary} barBgColor={colors.separator} />
+                </Card>
+              </>
+            )}
 
-            {/* Recent scans */}
+            {/* Recent Scans */}
             {stats.recentScans.length > 0 && (
               <>
-                <Text style={[styles.sectionTitle, { color: colors.text }]}>🕐 Analyses récentes</Text>
+                <Text style={[styles.sectionTitle, { color: colors.text }]}>🕐 Dernières analyses</Text>
                 {stats.recentScans.slice(0, 3).map((scan) => (
                   <Card key={scan.id} variant="outlined" style={{ marginBottom: Spacing.sm, padding: Spacing.md }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md }}>
-                      <View style={[{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' }, { backgroundColor: getRiskColor(scan.topPrediction.riskLevel) + '15' }]}>
+                      <View style={[styles.scanIcon, { backgroundColor: getRiskColor(scan.topPrediction.riskLevel) + '15' }]}>
                         <Text style={{ fontSize: 20 }}>{scan.topPrediction.icon}</Text>
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: FontSize.md, fontWeight: '600', color: colors.text }}>{scan.topPrediction.nameFr}</Text>
-                        <Text style={{ fontSize: FontSize.xs, color: colors.textTertiary }}>{new Date(scan.date).toLocaleDateString('fr-FR')} à {new Date(scan.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</Text>
+                        <Text style={{ fontSize: FontSize.xs, color: colors.textTertiary }}>
+                          {new Date(scan.date).toLocaleDateString('fr-FR')} — ABCDE: {scan.abcdeScore.total.toFixed(1)}
+                        </Text>
                       </View>
-                      <View style={[styles.recentBadge, { backgroundColor: getRiskColor(scan.topPrediction.riskLevel) + '15' }]}>
-                        <Text style={{ fontSize: FontSize.xs, fontWeight: '700', color: getRiskColor(scan.topPrediction.riskLevel) }}>{(scan.topPrediction.confidence * 100).toFixed(0)}%</Text>
+                      <View style={[styles.confBadge, { backgroundColor: getRiskColor(scan.topPrediction.riskLevel) + '15' }]}>
+                        <Text style={{ fontSize: FontSize.xs, fontWeight: '700', color: getRiskColor(scan.topPrediction.riskLevel) }}>
+                          {(scan.topPrediction.confidence * 100).toFixed(0)}%
+                        </Text>
                       </View>
                     </View>
                   </Card>
@@ -190,53 +261,96 @@ export default function HomeScreen() {
           </Animated.View>
         )}
 
-        {/* How it works */}
-        <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Comment ça marche ?</Text>
-          <View style={styles.stepsContainer}>
-            {[
-              { icon: 'camera-outline', label: 'Prenez une photo', color: Colors.primary },
-              { icon: 'hardware-chip-outline', label: 'Analyse IA', color: Colors.accent },
-              { icon: 'document-text-outline', label: 'Résultats détaillés', color: Colors.secondary },
-            ].map((step, index) => (
-              <View key={index} style={styles.stepItem}>
-                <LinearGradient colors={[step.color + '20', step.color + '08']} style={styles.stepIconContainer}>
-                  <Ionicons name={step.icon as any} size={26} color={step.color} />
-                </LinearGradient>
-                <Text style={[styles.stepNumber, { color: step.color }]}>{index + 1}</Text>
-                <Text style={[styles.stepLabel, { color: colors.text }]}>{step.label}</Text>
-                {index < 2 && <Ionicons name="chevron-forward" size={16} color={colors.textTertiary} style={styles.stepArrow} />}
-              </View>
-            ))}
-          </View>
-        </Animated.View>
-
-        {/* Tips */}
-        <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Conseils de Prévention</Text>
-          {TIPS.map((tip, index) => (
-            <Card key={index} variant="outlined" style={[styles.tipCard, { marginBottom: index < TIPS.length - 1 ? Spacing.sm : 0 }]}>
-              <View style={styles.tipRow}>
-                <Text style={styles.tipIcon}>{tip.icon}</Text>
-                <View style={styles.tipContent}>
-                  <Text style={[styles.tipTitle, { color: colors.text }]}>{tip.title}</Text>
-                  <Text style={[styles.tipDesc, { color: colors.textSecondary }]}>{tip.desc}</Text>
+        {/* ── Medical Articles Feed ── */}
+        <Animated.View style={{ opacity: fadeAnim }}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>📰 Veille Médicale</Text>
+          {articles.map((art) => (
+            <TouchableOpacity key={art.id} activeOpacity={0.8} onPress={() => { setSelectedArticle(art); setShowArticleModal(true); }}>
+              <Card variant="outlined" style={{ marginBottom: Spacing.sm, padding: Spacing.md }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <View style={[styles.catBadge, { backgroundColor: Colors.primary + '15' }]}>
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.primary }}>{art.category}</Text>
+                  </View>
+                  <Text style={{ fontSize: FontSize.xs, color: colors.textTertiary }}>{new Date(art.date).toLocaleDateString('fr-FR')}</Text>
                 </View>
-                <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} />
-              </View>
-            </Card>
+                <Text style={{ fontSize: FontSize.md, fontWeight: '700', color: colors.text, marginBottom: 4 }}>{art.title}</Text>
+                <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, lineHeight: 18 }} numberOfLines={2}>{art.summary}</Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.sm }}>
+                  <Text style={{ fontSize: 10, color: colors.textTertiary, fontStyle: 'italic' }}>{art.source}</Text>
+                  <TouchableOpacity onPress={() => toggleSaveArticle(art.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                    <Ionicons name={art.saved ? 'bookmark' : 'bookmark-outline'} size={18} color={Colors.primary} />
+                  </TouchableOpacity>
+                </View>
+              </Card>
+            </TouchableOpacity>
           ))}
         </Animated.View>
 
-        {/* Disclaimer */}
+        {/* ── Disclaimer ── */}
         <View style={[styles.disclaimer, { backgroundColor: Colors.warning + '10', borderColor: Colors.warning + '30' }]}>
-          <Ionicons name="information-circle" size={20} color={Colors.warning} />
+          <Ionicons name="information-circle" size={18} color={Colors.warning} />
           <Text style={[styles.disclaimerText, { color: colors.textSecondary }]}>
-            Cette application est un outil d'aide au dépistage et ne remplace pas un diagnostic médical professionnel.
+            Outil d'aide au dépistage — ne remplace pas un diagnostic médical professionnel.
           </Text>
         </View>
-        <View style={{ height: 20 }} />
+        <View style={{ height: 30 }} />
       </ScrollView>
+
+      {/* ── Article Modal ── */}
+      <Modal visible={showArticleModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{selectedArticle?.title}</Text>
+              <TouchableOpacity onPress={() => setShowArticleModal(false)}>
+                <Ionicons name="close-circle" size={28} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+              <View style={{ flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md }}>
+                <View style={[styles.catBadge, { backgroundColor: Colors.primary + '15' }]}>
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.primary }}>{selectedArticle?.category}</Text>
+                </View>
+                <Text style={{ fontSize: FontSize.xs, color: colors.textTertiary }}>{selectedArticle?.date ? new Date(selectedArticle.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : ''}</Text>
+              </View>
+              <Text style={{ fontSize: FontSize.sm, fontWeight: '600', color: Colors.primary, marginBottom: Spacing.sm, lineHeight: 20 }}>{selectedArticle?.summary}</Text>
+              <View style={{ height: 1, backgroundColor: colors.separator, marginBottom: Spacing.md }} />
+              <Text style={{ fontSize: FontSize.md, color: colors.text, lineHeight: 24 }}>{selectedArticle?.content}</Text>
+              <View style={{ marginTop: Spacing.lg, padding: Spacing.md, backgroundColor: Colors.primary + '08', borderRadius: BorderRadius.md }}>
+                <Text style={{ fontSize: FontSize.xs, fontWeight: '600', color: Colors.primary }}>📖 Source</Text>
+                <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, marginTop: 4 }}>{selectedArticle?.source}</Text>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── Insights Modal ── */}
+      <Modal visible={showInsightsModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>🤖 Analyses IA</Text>
+              <TouchableOpacity onPress={() => setShowInsightsModal(false)}>
+                <Ionicons name="close-circle" size={28} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ flex: 1 }}>
+              {insights.map((ins) => (
+                <View key={ins.id} style={[styles.insightModalRow, { borderColor: colors.separator }]}>
+                  <View style={[styles.insightDot, { backgroundColor: getInsightBg(ins.severity) + '20' }]}>
+                    <Text style={{ fontSize: 20 }}>{ins.icon}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '700', color: colors.text, marginBottom: 2 }}>{ins.title}</Text>
+                    <Text style={{ fontSize: FontSize.sm, color: colors.textSecondary, lineHeight: 20 }}>{ins.message}</Text>
+                  </View>
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -244,41 +358,46 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { padding: Spacing.lg },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.lg },
-  greeting: { fontSize: FontSize.md, fontWeight: FontWeight.medium },
-  appName: { fontSize: FontSize.xxxl, fontWeight: FontWeight.extrabold, letterSpacing: -0.5 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md },
+  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  logo: { width: 44, height: 44, borderRadius: 12 },
+  greeting: { fontSize: FontSize.xs, fontWeight: FontWeight.medium },
+  appName: { fontSize: FontSize.xl, fontWeight: FontWeight.extrabold, letterSpacing: -0.5 },
   notifBtn: { width: 44, height: 44, borderRadius: BorderRadius.full, alignItems: 'center', justifyContent: 'center', ...Shadow.sm },
-  heroCard: { borderRadius: BorderRadius.xl, padding: Spacing.lg, marginBottom: Spacing.lg, overflow: 'hidden', minHeight: 180 },
-  heroContent: { flexDirection: 'row', alignItems: 'center', zIndex: 1 },
-  heroTextSection: { flex: 1, marginRight: Spacing.md },
-  heroTitle: { fontSize: FontSize.xl, fontWeight: FontWeight.bold, color: '#FFF', marginBottom: Spacing.xs },
-  heroSubtitle: { fontSize: FontSize.sm, color: 'rgba(255,255,255,0.8)', lineHeight: 20, marginBottom: Spacing.md },
-  heroButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm + 2, borderRadius: BorderRadius.full, alignSelf: 'flex-start', gap: Spacing.xs },
-  heroButtonText: { color: '#2563EB', fontWeight: FontWeight.semibold, fontSize: FontSize.sm },
-  heroIconContainer: { alignItems: 'center', justifyContent: 'center' },
-  heroIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: 'rgba(255,255,255,0.3)' },
+  notifBadge: { position: 'absolute', top: 8, right: 8, width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.danger, borderWidth: 2, borderColor: '#FFF' },
+  periodRow: { flexDirection: 'row', backgroundColor: 'rgba(100,116,139,0.08)', borderRadius: BorderRadius.full, padding: 3, marginBottom: Spacing.lg },
+  periodBtn: { flex: 1, paddingVertical: 8, borderRadius: BorderRadius.full, alignItems: 'center' },
+  periodText: { fontSize: FontSize.sm, fontWeight: FontWeight.semibold },
+  heroCard: { borderRadius: BorderRadius.xl, padding: Spacing.lg, marginBottom: Spacing.lg, overflow: 'hidden' },
+  heroContent: { flexDirection: 'row', alignItems: 'center' },
+  heroTitle: { fontSize: FontSize.xl, fontWeight: FontWeight.bold, color: '#FFF', marginBottom: 4 },
+  heroSub: { fontSize: FontSize.sm, color: 'rgba(255,255,255,0.75)' },
+  heroIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' },
   decorCircle: { position: 'absolute', borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.08)' },
-  decorCircle1: { width: 150, height: 150, top: -30, right: -30 },
-  decorCircle2: { width: 100, height: 100, bottom: -20, left: -20 },
+  tipGradient: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderRadius: BorderRadius.lg, marginBottom: Spacing.lg },
+  tipTitle: { fontSize: FontSize.sm, fontWeight: FontWeight.bold, marginBottom: 2 },
+  tipDesc: { fontSize: FontSize.xs, lineHeight: 17 },
   statsRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg },
   statCard: { flex: 1, alignItems: 'center', paddingVertical: Spacing.md },
-  statIcon: { width: 44, height: 44, borderRadius: BorderRadius.md, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
-  statNumber: { fontSize: FontSize.xxl, fontWeight: FontWeight.bold },
-  statLabel: { fontSize: FontSize.xs, fontWeight: FontWeight.medium, marginTop: 2 },
-  sectionTitle: { fontSize: FontSize.xl, fontWeight: FontWeight.bold, marginBottom: Spacing.md },
-  stepsContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.xl },
-  stepItem: { alignItems: 'center', flex: 1, position: 'relative' },
-  stepIconContainer: { width: 56, height: 56, borderRadius: BorderRadius.lg, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
-  stepNumber: { fontSize: FontSize.xs, fontWeight: FontWeight.bold, marginBottom: 2 },
-  stepLabel: { fontSize: FontSize.xs, fontWeight: FontWeight.medium, textAlign: 'center' },
-  stepArrow: { position: 'absolute', right: -4, top: 20 },
-  tipCard: { paddingVertical: Spacing.sm + 4, paddingHorizontal: Spacing.md },
-  tipRow: { flexDirection: 'row', alignItems: 'center' },
-  tipIcon: { fontSize: 28, marginRight: Spacing.md },
-  tipContent: { flex: 1 },
-  tipTitle: { fontSize: FontSize.md, fontWeight: FontWeight.semibold, marginBottom: 2 },
-  tipDesc: { fontSize: FontSize.sm, lineHeight: 18 },
-  recentBadge: { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: BorderRadius.full },
-  disclaimer: { flexDirection: 'row', padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, marginTop: Spacing.xl, gap: Spacing.sm, alignItems: 'flex-start' },
+  statIcon: { width: 40, height: 40, borderRadius: BorderRadius.md, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },
+  statNum: { fontSize: FontSize.xxl, fontWeight: FontWeight.bold },
+  statLabel: { fontSize: 10, fontWeight: FontWeight.medium, marginTop: 2 },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.md },
+  sectionTitle: { fontSize: FontSize.lg, fontWeight: FontWeight.bold, marginBottom: Spacing.md },
+  insightRow: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, gap: Spacing.sm },
+  insightDot: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  insightTitle: { fontSize: FontSize.sm, fontWeight: FontWeight.bold, marginBottom: 2 },
+  insightMsg: { fontSize: FontSize.xs, lineHeight: 16 },
+  severityBadge: { width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  severityDotInner: { width: 8, height: 8, borderRadius: 4 },
+  scanIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  confBadge: { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: BorderRadius.full },
+  catBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: BorderRadius.full },
+  disclaimer: { flexDirection: 'row', padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, marginTop: Spacing.md, gap: Spacing.sm, alignItems: 'flex-start' },
   disclaimerText: { flex: 1, fontSize: FontSize.xs, lineHeight: 16 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalContent: { height: '70%', borderTopLeftRadius: BorderRadius.xl, borderTopRightRadius: BorderRadius.xl, padding: Spacing.lg },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.lg },
+  modalTitle: { fontSize: FontSize.xl, fontWeight: FontWeight.bold, flex: 1, marginRight: Spacing.sm },
+  insightModalRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.sm, paddingVertical: Spacing.md, borderBottomWidth: 1 },
 });

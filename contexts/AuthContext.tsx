@@ -1,9 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-
-/**
- * DermaScan — Enhanced Authentication Context
- * Doctor-focused secure authentication with medical credentials
- */
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 
 export interface DoctorProfile {
   id: string;
@@ -11,9 +6,9 @@ export interface DoctorProfile {
   email: string;
   role: 'doctor' | 'resident' | 'specialist';
   specialty: string;
-  licenseNumber: string;     // RPPS or equivalent
+  licenseNumber: string;
   hospital: string;
-  skinType?: number;         // Fitzpatrick 1-6
+  skinType?: number;
   yearsExperience?: number;
   avatarInitials: string;
   createdAt: string;
@@ -42,8 +37,11 @@ export interface RegisterData {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Demo doctors database — realistic medical credentials
-const DEMO_DOCTORS: (DoctorProfile & { password: string })[] = [
+interface StoredDoctor extends DoctorProfile {
+  password: string;
+}
+
+const INITIAL_DOCTORS: StoredDoctor[] = [
   {
     id: '1',
     email: 'dr.amira@dermascan.com',
@@ -78,8 +76,9 @@ const DEMO_DOCTORS: (DoctorProfile & { password: string })[] = [
 
 function getInitials(name: string): string {
   return name
-    .replace(/^(Dr\.\s*|Pr\.\s*)/i, '')
+    .replace(/^(Dr\.?\s*|Pr\.?\s*)/i, '')
     .split(' ')
+    .filter(w => w.length > 0)
     .map(w => w[0])
     .join('')
     .toUpperCase()
@@ -89,51 +88,64 @@ function getInitials(name: string): string {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<DoctorProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const doctorsRef = useRef<StoredDoctor[]>([...INITIAL_DOCTORS]);
 
   useEffect(() => {
-    // Simulate checking stored secure token
     const timer = setTimeout(() => {
       setIsLoading(false);
-    }, 1000);
+    }, 800);
     return () => clearTimeout(timer);
   }, []);
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
-    setIsLoading(true);
-    // Simulate secure API call
-    await new Promise(r => setTimeout(r, 1200));
+    await new Promise(r => setTimeout(r, 800));
 
-    const found = DEMO_DOCTORS.find(u => u.email === email && u.password === password);
+    const trimmedEmail = email.trim().toLowerCase();
+    const found = doctorsRef.current.find(
+      u => u.email.toLowerCase() === trimmedEmail && u.password === password
+    );
+
     if (found) {
       const { password: _, ...profile } = found;
       setUser({ ...profile, lastLoginAt: new Date().toISOString() });
-      setIsLoading(false);
       return { success: true };
     }
-    setIsLoading(false);
-    return { success: false, error: 'Identifiants incorrects. Vérifiez votre email et mot de passe.' };
+
+    const emailExists = doctorsRef.current.find(
+      u => u.email.toLowerCase() === trimmedEmail
+    );
+
+    if (emailExists) {
+      return { success: false, error: 'Mot de passe incorrect. Veuillez réessayer.' };
+    }
+
+    return {
+      success: false,
+      error: 'Aucun compte trouvé avec cet email. Veuillez créer un compte.',
+    };
   };
 
   const register = async (data: RegisterData): Promise<{ success: boolean; error?: string }> => {
-    setIsLoading(true);
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 800));
 
-    // Validate license number format
     if (!data.licenseNumber || data.licenseNumber.length < 5) {
-      setIsLoading(false);
-      return { success: false, error: 'Numéro de licence médicale invalide.' };
+      return { success: false, error: 'Numéro de licence invalide (minimum 5 caractères).' };
     }
 
-    // Simulate checking for existing email
-    if (DEMO_DOCTORS.some(u => u.email === data.email)) {
-      setIsLoading(false);
+    if (!data.password || data.password.length < 6) {
+      return { success: false, error: 'Mot de passe trop court (minimum 6 caractères).' };
+    }
+
+    const trimmedEmail = data.email.trim().toLowerCase();
+    if (doctorsRef.current.some(u => u.email.toLowerCase() === trimmedEmail)) {
       return { success: false, error: 'Un compte avec cet email existe déjà.' };
     }
 
-    const newDoctor: DoctorProfile = {
+    const newDoctor: StoredDoctor = {
       id: Date.now().toString(),
       name: data.name,
-      email: data.email,
+      email: trimmedEmail,
+      password: data.password,
       role: data.role,
       specialty: data.specialty,
       licenseNumber: data.licenseNumber,
@@ -142,8 +154,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       createdAt: new Date().toISOString(),
       lastLoginAt: new Date().toISOString(),
     };
-    setUser(newDoctor);
-    setIsLoading(false);
+
+    doctorsRef.current.push(newDoctor);
+
+    const { password: _, ...profile } = newDoctor;
+    setUser(profile);
     return { success: true };
   };
 
@@ -158,7 +173,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, isAuthenticated: !!user, login, register, logout, updateProfile }}>
+    <AuthContext.Provider value={{
+      user,
+      isLoading,
+      isAuthenticated: !!user,
+      login,
+      register,
+      logout,
+      updateProfile,
+    }}>
       {children}
     </AuthContext.Provider>
   );

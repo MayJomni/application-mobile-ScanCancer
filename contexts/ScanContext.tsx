@@ -52,6 +52,9 @@ export interface ScanResult {
     total: number;
   };
   qualityScore: number; // 0-100
+  location?: { latitude: number; longitude: number; city?: string };
+  patientAge?: number;
+  anatomicalSite?: 'head/neck' | 'trunk' | 'upper_limbs' | 'lower_limbs' | 'other';
 }
 
 interface ScanContextType {
@@ -60,6 +63,9 @@ interface ScanContextType {
   removeScan: (id: string) => void;
   clearScans: () => void;
   getStats: () => DashboardStats;
+  getScansByLocation: () => { latitude: number; longitude: number; city?: string; scans: ScanResult[] }[];
+  getAverageABCDEscores: () => { asymmetry: number; border: number; color: number; diameter: number; evolution: number; total: number };
+  getPredictiveInsights: () => { type: 'alert' | 'recommendation' | 'insight'; message: string; date: Date }[];
 }
 
 export interface DashboardStats {
@@ -222,8 +228,67 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
     };
   }, [scans]);
 
+  const getScansByLocation = useCallback(() => {
+    const locationsMap = new Map<string, { latitude: number; longitude: number; city?: string; scans: ScanResult[] }>();
+    scans.forEach(scan => {
+      if (scan.location) {
+        const key = `${scan.location.latitude},${scan.location.longitude}`;
+        if (!locationsMap.has(key)) {
+          locationsMap.set(key, { ...scan.location, scans: [] });
+        }
+        locationsMap.get(key)!.scans.push(scan);
+      }
+    });
+    return Array.from(locationsMap.values());
+  }, [scans]);
+
+  const getAverageABCDEscores = useCallback(() => {
+    if (scans.length === 0) return { asymmetry: 0, border: 0, color: 0, diameter: 0, evolution: 0, total: 0 };
+    const sums = scans.reduce((acc, scan) => ({
+      asymmetry: acc.asymmetry + scan.abcdeScore.asymmetry,
+      border: acc.border + scan.abcdeScore.border,
+      color: acc.color + scan.abcdeScore.color,
+      diameter: acc.diameter + scan.abcdeScore.diameter,
+      evolution: acc.evolution + scan.abcdeScore.evolution,
+      total: acc.total + scan.abcdeScore.total,
+    }), { asymmetry: 0, border: 0, color: 0, diameter: 0, evolution: 0, total: 0 });
+    
+    return {
+      asymmetry: sums.asymmetry / scans.length,
+      border: sums.border / scans.length,
+      color: sums.color / scans.length,
+      diameter: sums.diameter / scans.length,
+      evolution: sums.evolution / scans.length,
+      total: sums.total / scans.length,
+    };
+  }, [scans]);
+
+  const getPredictiveInsights = useCallback(() => {
+    const insights: { type: 'alert' | 'recommendation' | 'insight'; message: string; date: Date }[] = [];
+    const malignantCount = scans.filter(s => s.topPrediction.riskLevel === 'malignant').length;
+    
+    if (malignantCount > 2) {
+      insights.push({ type: 'alert', message: `Vous avez diagnostiqué ${malignantCount} lésions malignes récemment. Pensez à vérifier les patients avec phototype I.`, date: new Date() });
+    }
+    
+    const preMalignantCount = scans.filter(s => s.topPrediction.riskLevel === 'pre-malignant').length;
+    if (preMalignantCount > 5) {
+      insights.push({ type: 'insight', message: "Le taux de lésions pré-malignes est élevé ce mois-ci dans votre région. Envisagez une campagne de dépistage.", date: new Date() });
+    }
+
+    if (scans.length > 20) {
+      insights.push({ type: 'recommendation', message: "Votre volume de scans est important. N'oubliez pas de prendre des pauses régulières.", date: new Date() });
+    }
+
+    if (insights.length === 0) {
+      insights.push({ type: 'insight', message: "Vos statistiques sont stables. Continuez votre excellent travail de dépistage.", date: new Date() });
+    }
+
+    return insights;
+  }, [scans]);
+
   return (
-    <ScanContext.Provider value={{ scans, addScan, removeScan, clearScans, getStats }}>
+    <ScanContext.Provider value={{ scans, addScan, removeScan, clearScans, getStats, getScansByLocation, getAverageABCDEscores, getPredictiveInsights }}>
       {children}
     </ScanContext.Provider>
   );
