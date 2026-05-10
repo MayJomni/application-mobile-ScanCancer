@@ -1,7 +1,7 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Animated, StatusBar, Switch, Alert,
+  Animated, StatusBar, Switch, Alert, TextInput,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,7 @@ import Colors from '@/constants/Colors';
 import { useThemeColors, useColorScheme } from '@/hooks/useTheme';
 import { Spacing, BorderRadius, FontSize, FontWeight, Shadow } from '@/constants/Theme';
 import Card from '@/components/ui/Card';
+import { setApiUrl, getApiUrl, checkHealth } from '@/services/ScanAPIService';
 
 const SKIN_TYPES = [
   { id: 1, label: 'Type I', desc: 'Très claire', color: '#FDEBD0' },
@@ -26,12 +27,16 @@ export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
+  const [apiUrl, setApiUrlState] = useState(getApiUrl());
+  const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
 
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.timing(slideAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
     ]).start();
+    // Check API on mount
+    checkHealth().then(s => setApiStatus(s && s.status === 'ok' ? 'online' : 'offline'));
   }, []);
 
   const MenuItem = ({ icon, label, subtitle, onPress, showArrow = true, rightElement }: any) => (
@@ -97,6 +102,50 @@ export default function ProfileScreen() {
             <MenuItem icon="shield-checkmark-outline" label="Confidentialité" onPress={() => {}} />
           </Card>
 
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Serveur IA</Text>
+          <Card variant="elevated" padding="sm" style={{ marginBottom: Spacing.lg }}>
+            <View style={{ padding: Spacing.md }}>
+              <Text style={{ fontSize: FontSize.sm, fontWeight: '600', color: colors.text, marginBottom: 6 }}>URL de l'API (ngrok / Colab)</Text>
+              <TextInput
+                style={[styles.apiInput, { backgroundColor: colors.background, color: colors.text, borderColor: colors.separator }]}
+                value={apiUrl}
+                onChangeText={setApiUrlState}
+                placeholder="https://xxxx.ngrok-free.app"
+                placeholderTextColor={colors.textTertiary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+              />
+              <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm }}>
+                <TouchableOpacity
+                  style={[styles.apiBtn, { backgroundColor: Colors.primary }]}
+                  onPress={() => {
+                    setApiUrl(apiUrl);
+                    setApiStatus('checking');
+                    checkHealth().then(s => {
+                      if (s && s.status === 'ok') {
+                        setApiStatus('online');
+                        Alert.alert('✅ Connecté', `Mode: ${s.mode}\nModèle 1: ${s.model1 ? 'Oui' : 'Non'}\nModèle 2: ${s.model2 ? 'Oui' : 'Non'}`);
+                      } else {
+                        setApiStatus('offline');
+                        Alert.alert('❌ Déconnecté', 'Impossible de joindre le serveur. Vérifiez l\'URL et que le backend tourne.');
+                      }
+                    });
+                  }}
+                >
+                  <Ionicons name="flash" size={16} color="#FFF" />
+                  <Text style={{ color: '#FFF', fontWeight: '600', fontSize: 13 }}>Tester</Text>
+                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: apiStatus === 'online' ? '#16A34A' : apiStatus === 'offline' ? '#DC2626' : '#F59E0B' }} />
+                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                    {apiStatus === 'online' ? 'En ligne' : apiStatus === 'offline' ? 'Hors ligne' : 'Vérification...'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          </Card>
+
           <Text style={[styles.sectionTitle, { color: colors.text }]}>À propos</Text>
           <Card variant="elevated" padding="sm" style={{ marginBottom: Spacing.lg }}>
             <MenuItem icon="information-circle-outline" label="À propos de DermaScan" subtitle="Version 1.0.0" onPress={() => {}} />
@@ -145,4 +194,6 @@ const styles = StyleSheet.create({
   disclaimer: { flexDirection: 'row', padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, gap: Spacing.sm, alignItems: 'flex-start', marginBottom: Spacing.md },
   disclaimerText: { flex: 1, fontSize: FontSize.xs, lineHeight: 16 },
   footerText: { textAlign: 'center', fontSize: FontSize.xs, marginTop: Spacing.sm },
+  apiInput: { borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm + 2, fontSize: FontSize.sm },
+  apiBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderRadius: BorderRadius.md },
 });

@@ -14,6 +14,7 @@ import { getRiskColor, getRiskLabel } from '@/constants/Lesions';
 import Card from '@/components/ui/Card';
 import Histogram, { CircularGauge, ColorSwatchRow } from '@/components/ui/Histogram';
 import { useScanContext, generatePredictions, generateImageStats, generateABCDEScore, ScanResult } from '@/contexts/ScanContext';
+import { predictFromAPI, checkHealth, APIPredictionResult } from '@/services/ScanAPIService';
 
 const { width } = Dimensions.get('window');
 
@@ -28,6 +29,8 @@ export default function ScanScreen() {
   const [results, setResults] = useState<any[] | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [showStats, setShowStats] = useState(false);
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [modelMode, setModelMode] = useState<string>('checking...');
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(20)).current;
@@ -39,6 +42,16 @@ export default function ScanScreen() {
       Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }),
       Animated.timing(slideAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
     ]).start();
+    // Check API health on mount
+    checkHealth().then(status => {
+      if (status && status.status === 'ok') {
+        setApiOnline(true);
+        setModelMode(status.mode === 'ensemble' ? 'Ensemble IA' : status.mode === 'single' ? 'Modèle unique' : 'Démo');
+      } else {
+        setApiOnline(false);
+        setModelMode('Simulation locale');
+      }
+    });
   }, []);
 
   const pickImage = async (source: 'camera' | 'gallery') => {
@@ -60,13 +73,41 @@ export default function ScanScreen() {
     }
   };
 
-  const analyzeImage = () => {
+  const analyzeImage = async () => {
     if (!image) return;
     setAnalyzing(true); setResults(null); setScanResult(null);
     progressAnim.setValue(0);
-    Animated.timing(progressAnim, { toValue: 1, duration: 2500, useNativeDriver: false }).start();
+    Animated.timing(progressAnim, { toValue: 1, duration: 4000, useNativeDriver: false }).start();
 
-    setTimeout(() => {
+    try {
+      // Try real API first
+      const apiResult: APIPredictionResult = await predictFromAPI(image);
+      const preds = apiResult.predictions;
+      const imgStats = generateImageStats();
+      const abcde = generateABCDEScore(preds);
+      const scan: ScanResult = {
+        id: Date.now().toString(),
+        imageUri: image,
+        date: new Date(),
+        predictions: preds,
+        topPrediction: preds[0],
+        imageStats: imgStats,
+        abcdeScore: abcde,
+        qualityScore: Math.round(50 + Math.random() * 45),
+      };
+      setResults(preds);
+      setScanResult(scan);
+      setAnalyzing(false);
+      addScan(scan);
+      setModelMode(apiResult.modelUsed === 'ensemble' ? 'Ensemble IA' : apiResult.modelUsed === 'single' ? 'Modèle unique' : 'Démo');
+      resultFade.setValue(0);
+      Animated.timing(resultFade, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+      if (apiResult.lowConfidence) {
+        Alert.alert('⚠️ Confiance faible', 'Le modèle a une faible confiance. Vérifiez la qualité de l\'image ou consultez un spécialiste.');
+      }
+    } catch (apiError: any) {
+      console.log('[Scan] API failed, falling back to local:', apiError.message);
+      // Fallback to local simulation
       const preds = generatePredictions();
       const imgStats = generateImageStats();
       const abcde = generateABCDEScore(preds);
@@ -84,9 +125,11 @@ export default function ScanScreen() {
       setScanResult(scan);
       setAnalyzing(false);
       addScan(scan);
+      setModelMode('Simulation locale');
+      setApiOnline(false);
       resultFade.setValue(0);
       Animated.timing(resultFade, { toValue: 1, duration: 500, useNativeDriver: true }).start();
-    }, 2800);
+    }
   };
 
   const resetScan = () => { setImage(null); setResults(null); setScanResult(null); setShowStats(false); };
@@ -99,6 +142,10 @@ export default function ScanScreen() {
         <Animated.View style={[styles.header, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
           <Text style={[styles.title, { color: colors.text }]}>Scanner</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Analysez une lésion cutanée avec l'IA</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: Spacing.xs, gap: 6 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: apiOnline ? '#16A34A' : apiOnline === false ? '#F59E0B' : '#94A3B8' }} />
+            <Text style={{ fontSize: 11, color: colors.textTertiary }}>{modelMode}</Text>
+          </View>
         </Animated.View>
 
         {/* Image Area */}
